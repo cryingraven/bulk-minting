@@ -13,21 +13,21 @@ baseRequest.interceptors.response.use(
 		return Promise.reject(error)
 	}
 )
-export const postUploadSingleImage = (data: unknown) =>
-	baseRequest.post('/upload/single', data)
 
 export const submitCsv = async (auth: string, data: any) => {
-	return baseRequest.post('/collection/bulk-creation', data, {
+	return await baseRequest.post('/collection/bulk-creation', data, {
 		headers: {
 			Authorization: auth,
+			'Content-Type': 'multipart/form-data',
 		},
 	})
 }
 
 export const submitAssets = async (auth: string, data: any) => {
-	return baseRequest.post('/collection/bulk-creation-assets', data, {
+	return await baseRequest.post('/collection/bulk-creation-assets', data, {
 		headers: {
 			Authorization: auth,
+			'Content-Type': 'multipart/form-data',
 		},
 	})
 }
