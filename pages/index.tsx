@@ -8,6 +8,7 @@ import axios, { AxiosError } from 'axios'
 import { utils } from 'near-api-js'
 import Head from 'next/head'
 import { CollectionData, NFTMetadata, Royalties, Royalty, Sale } from '../model'
+import { Md5 } from 'ts-md5'
 interface FormData {
 	name: string
 	desc: string
@@ -75,7 +76,7 @@ export default function Home() {
 			} as NFTMetadata
 
 			const royalty: Royalty = {
-				[collectionUpload.account_id]: 1000,
+				[collectionUpload.account_id]: 10000,
 			} as Royalty
 			const royalties: Royalties = {
 				accounts: royalty,
@@ -86,7 +87,7 @@ export default function Home() {
 				price: utils.format.parseNearAmount(parsed.price.toString()),
 			} as Sale
 			await contract.create_nft_contract(
-				collectionUpload.base_url,
+				Md5.hashStr(collectionUpload.base_url),
 				metadata,
 				parsed.images.length,
 				sale
