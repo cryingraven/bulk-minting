@@ -15,7 +15,7 @@ import {
 import { setupMyNearWallet } from '@paras-wallet-selector/my-near-wallet'
 import { setupNearWallet } from '@paras-wallet-selector/near-wallet'
 import { setupSender } from '@paras-wallet-selector/sender'
-const THIRTY_TGAS = '30000000000000'
+const DEFAULT_GAS = '300000000000000'
 const NO_DEPOSIT = '0'
 interface QueryResult {
 	result: any
@@ -113,7 +113,7 @@ export class NearWallet {
 		contractId: any,
 		method: any,
 		args = {},
-		gas = THIRTY_TGAS,
+		gas = DEFAULT_GAS,
 		deposit = NO_DEPOSIT
 	) {
 		return await this.wallet!!.signAndSendTransaction({

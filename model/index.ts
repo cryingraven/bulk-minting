@@ -17,9 +17,10 @@ export interface Royalties {
 	percent: number
 }
 
-export interface Sale{
-  royalties: Royalties
-  price: string
+export interface Sale {
+	royalties: Royalties
+	initial_royalties: Royalties
+	price: string
 }
 
 export interface CollectionData {
