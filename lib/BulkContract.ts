@@ -1,6 +1,6 @@
 import { utils } from 'near-api-js'
 import { NFTMetadata, Sale } from '../model'
-import { NearWallet } from './NearWallet'
+import { DEFAULT_GAS, NearWallet } from './NearWallet'
 
 export class BulKContract {
 	contractId: any
@@ -25,7 +25,7 @@ export class BulKContract {
 				supply,
 				sale,
 			},
-			'30000000000000',
+			DEFAULT_GAS,
 			utils.format.parseNearAmount('10')?.toString()
 		)
 	}

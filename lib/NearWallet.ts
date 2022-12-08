@@ -15,7 +15,7 @@ import {
 import { setupMyNearWallet } from '@paras-wallet-selector/my-near-wallet'
 import { setupNearWallet } from '@paras-wallet-selector/near-wallet'
 import { setupSender } from '@paras-wallet-selector/sender'
-const DEFAULT_GAS = '300000000000000'
+export const DEFAULT_GAS = '300000000000000'
 const NO_DEPOSIT = '0'
 interface QueryResult {
 	result: any
