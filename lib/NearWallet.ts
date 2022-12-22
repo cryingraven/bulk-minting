@@ -1,4 +1,4 @@
-import { providers } from 'near-api-js'
+import { providers, keyStores, KeyPair } from 'near-api-js'
 
 import '@paras-wallet-selector/modal-ui/styles.css'
 import { setupModal } from '@paras-wallet-selector/modal-ui'
@@ -20,6 +20,9 @@ const NO_DEPOSIT = '0'
 interface QueryResult {
 	result: any
 }
+interface ExecutorOutCome {
+	executor_id: string
+}
 export class NearWallet {
 	walletSelector: WalletSelector | undefined
 	wallet: Wallet | undefined
@@ -31,7 +34,7 @@ export class NearWallet {
 		network = 'testnet'
 	) {
 		this.createAccessKeyFor = createAccessKeyFor
-		this.network = 'testnet'
+		this.network = network as NetworkId
 	}
 
 	async startUp() {
@@ -137,7 +140,23 @@ export class NearWallet {
 		const { network } = this.walletSelector!!.options
 		const provider = new providers.JsonRpcProvider({ url: network.nodeUrl })
 
-		const transaction = await provider.txStatus(txhash, 'unnused')
-		return providers.getTransactionLastResult(transaction)
+		const transaction = (await provider.txStatus(txhash, 'unnused')) as any
+		const newTx = transaction.receipts_outcome[1]
+		if (newTx) {
+			return newTx.outcome.executor_id
+		}
+		return null
+	}
+
+	async generateKey(contractId: string) {
+		const keyStore = new keyStores.BrowserLocalStorageKeyStore()
+		const accessKey = KeyPair.fromRandom('ed25519')
+		await keyStore.setKey(this.network, contractId, accessKey)
+		return accessKey.getPublicKey()
+	}
+
+	async getAccessKey(contractId: string) {
+		const keyStore = new keyStores.BrowserLocalStorageKeyStore()
+		return await keyStore.getKey(this.network, contractId)
 	}
 }

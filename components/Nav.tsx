@@ -25,7 +25,7 @@ export default function Nav({
 							{isLogin ? (
 								<button
 									onClick={walletLogout}
-									className="bg-gray-900 text-white px-3 py-2 rounded-md text-sm font-medium"
+									className="bg-gray-900 text-white px-3 py-2 rounded-md text-base font-medium"
 									aria-current="page"
 								>
 									{accountId} (Sign Out)
@@ -33,7 +33,7 @@ export default function Nav({
 							) : (
 								<button
 									onClick={walletLogin}
-									className="bg-gray-900 text-white px-3 py-2 rounded-md text-sm font-medium"
+									className="bg-gray-900 text-white px-3 py-2 rounded-md text-base font-medium"
 									aria-current="page"
 								>
 									Login With Near

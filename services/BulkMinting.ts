@@ -13,18 +13,35 @@ baseRequest.interceptors.response.use(
 	}
 )
 
-export const submitCsv = async (auth: string, data: any) =>
+export const submitCsv = async (auth: string, data: any, signal: AbortSignal) =>
 	baseRequest.post('/collection/bulk-creation', data, {
 		headers: {
 			Authorization: auth,
 			'Content-Type': 'multipart/form-data',
 		},
+		signal: signal,
 	})
 
-export const submitAssets = async (auth: string, data: any) =>
-	baseRequest.post('/collection/bulk-creation-assets', data, {
+export const submitList = async (
+	auth: string,
+	data: any,
+	signal: AbortSignal
+) =>
+	baseRequest.post('/collection/bulk-creation-list', data, {
 		headers: {
 			Authorization: auth,
-			'Content-Type': 'multipart/form-data',
 		},
+		signal: signal,
 	})
+
+export const getTokenData = async (
+	collectionId: string,
+	mediaName: string,
+	signal: AbortSignal
+) =>
+	baseRequest.get(
+		`/collection/bulk-creation/data/${collectionId}/${mediaName}`,
+		{
+			signal: signal,
+		}
+	)

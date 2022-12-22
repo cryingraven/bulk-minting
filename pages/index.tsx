@@ -1,350 +1,529 @@
-import Nav from "../components/Nav";
-import { useForm } from "react-hook-form";
-import { NearWallet } from "../lib/NearWallet";
-import { BulKContract } from "../lib/BulkContract";
-import { useEffect, useState } from "react";
-import { submitAssets, submitCsv } from "../services/BulkMinting";
-import axios, { AxiosError } from "axios";
-import { utils } from "near-api-js";
-import Head from "next/head";
-import {
-  CollectionData,
-  NFTMetadata,
-  Royalties,
-  Royalty,
-  Sale,
-} from "../model";
-import { Md5 } from "ts-md5";
+import Nav from '../components/Nav'
+import { useForm } from 'react-hook-form'
+import { NearWallet } from '../lib/NearWallet'
+import { BulKContract } from '../lib/BulkContract'
+import { useEffect, useState } from 'react'
+import { getTokenData, submitCsv, submitList } from '../services/BulkMinting'
+import axios, { AxiosError } from 'axios'
+import { utils } from 'near-api-js'
+import AsyncRetry from 'async-retry'
+import { CollectionData, NFTMetadata, Royalties, Royalty, Sale } from '../model'
+import React from 'react'
+import UploadDialog from '../components/UploadDialog'
+import PreviewdDialog from '../components/PreviewDialog'
+import { NFTStorage, File as IPFSFile } from 'nft.storage'
+import Head from 'next/head'
+import Loading from '../components/Loading'
+import { useRouter } from 'next/router'
+import SuccessDialog from '../components/SuccessDialog'
 interface FormData {
-  name: string;
-  desc: string;
-  media: FileList;
-  csv: FileList;
-  images: FileList;
-  price: number;
-  api: string;
+	name: string
+	contract: string
+	desc: string
+	media: FileList
+	csv: FileList
+	folder: FileList
+	price: number
+	api: string
 }
-const contractId = process.env.NEXT_PUBLIC_CONTRACT_NAME;
-const bulkAPI = process.env.NEXT_PUBLIC_BULK_API;
+const contractId = process.env.NEXT_PUBLIC_CONTRACT_NAME
+const bulkAPI = process.env.NEXT_PUBLIC_BULK_API
 export default function Home() {
-  const wallet = new NearWallet(contractId);
-  const contract = new BulKContract(contractId, wallet);
-  const [isLogin, setLogin] = useState<boolean | undefined>(undefined);
-  const [isLoading, setLoading] = useState(false);
-  const [message, setMessage] = useState("");
-  const [authToken, setAuthToken] = useState("");
-  const [accountId, setAccountId] = useState("");
-  const { register, handleSubmit } = useForm();
-  const downloadTemplate = async () => {
-    const buffer = (await axios.get(`${bulkAPI}/template.csv`))
-      .data as unknown as BlobPart;
-    const blob = new Blob([buffer], { type: "text/csv" });
-    const timeSet = new Date().getTime();
-    const link = document.createElement("a");
-    link.href = window.URL.createObjectURL(blob);
-    link.download = `template_${timeSet}.csv`;
-    link.click();
-  };
-  const cleanMessage = () => {
-    setMessage("");
-  };
-  const onSubmit = async (data: any) => {
-    const parsed = data as FormData;
-    setLoading(true);
-    try {
-      var formData = new FormData();
-      formData.append("collection_name", parsed.name);
-      formData.append("collection_description", parsed.desc);
-      formData.append("files", parsed.csv[0]);
-      const result = await submitCsv(authToken, formData);
+	const router = useRouter()
+	let controller: AbortController | undefined
+	const wallet = new NearWallet(contractId)
+	const contract = new BulKContract(contractId, wallet)
+	const [isLogin, setLogin] = useState<boolean | undefined>(undefined)
+	const [currentFormData, setFormData] = useState<FormData>()
+	const [currentCollectionData, setCollectionData] = useState<CollectionData>()
+	const [logs, setLogs] = useState<string[]>([])
+	const [uploaded, setUploaded] = useState(0)
+	const [totalFiles, setTotalFiles] = useState(0)
+	const [tokens, setTokens] = useState<any[]>([])
+	const [isLoading, setLoading] = useState(false)
+	const [isUploading, setUploading] = useState(false)
+	const [isPreview, setPreview] = useState(false)
+	const [message, setMessage] = useState('')
+	const [authToken, setAuthToken] = useState('')
+	const [accountId, setAccountId] = useState('')
+	const { register, handleSubmit } = useForm()
+	const directoryOption = { directory: '', webkitdirectory: 'true' }
+	const downloadTemplate = async () => {
+		const buffer = (await axios.get(`${bulkAPI}/template.csv`))
+			.data as unknown as BlobPart
+		const blob = new Blob([buffer], { type: 'text/csv' })
+		const timeSet = new Date().getTime()
+		const link = document.createElement('a')
+		link.href = window.URL.createObjectURL(blob)
+		link.download = `template_${timeSet}.csv`
+		link.click()
+	}
+	const cleanMessage = () => {
+		setMessage('')
+	}
 
-      const collectionData = result.data as any;
-      const collectionId = collectionData.collection_id;
+	const onSubmit = async (data: any) => {
+		controller = new window.AbortController()
+		const parsed = data as FormData
+		setLoading(true)
+		try {
+			if (!parsed.contract.match('^[a-z0-9]{5,10}')) {
+				throw new Error(
+					'Contract name must be alphanumeric  with length 5-10 character'
+				)
+			}
+			const checkContract = await contract.checkContract(parsed.contract)
+			if (checkContract.result) {
+				throw new Error('Account Already Exist')
+			}
+			setFormData(parsed)
+			const saveCollectionData = async (signal: AbortSignal) => {
+				var formData = new FormData()
+				formData.append(
+					'contract_name',
+					`${parsed.contract}.${process.env.NEXT_PUBLIC_CONTRACT_NAME}`
+				)
+				formData.append('collection_name', parsed.name)
+				formData.append('collection_description', parsed.desc)
+				formData.append('files', parsed.csv[0])
+				const result = await submitCsv(authToken, formData, signal)
 
-      var formDataImages = new FormData();
-      formDataImages.append("collection_id", collectionId);
-      formDataImages.append("api_key", parsed.api);
-      for (let i = 0; i < parsed.images.length; i++) {
-        formDataImages.append("files", parsed.images[i]);
-      }
-      formDataImages.append("media", parsed.media[0]);
-      const resultUpload = await submitAssets(authToken, formDataImages);
-      const collectionUpload = resultUpload.data as unknown as CollectionData;
-      const tokenSymbol = `${collectionUpload.account_id[0]}${
-        collectionUpload.collection_id[0]
-      }${collectionUpload.base_url[0]}${new Date().getTime()}`;
+				const collectionSaved = result.data as any
+				const collectionId = collectionSaved.collection_id
+				let collectionData = {
+					account_id: accountId,
+					base_url: '',
+					collection_name: parsed.name,
+					collection_id: collectionId,
+				} as CollectionData
+				setCollectionData(collectionData)
+				logs.push(`csv uploaded successfully`)
+				setLogs(logs)
+				if (controller) {
+					setUploaded(0)
+					await uploadAssets(parsed, collectionData, controller.signal)
+				}
+			}
 
-      const metadata: NFTMetadata = {
-        spec: "nft-1.0.0",
-        symbol: tokenSymbol,
-        name: collectionUpload.collection_name,
-        base_uri: `https://${collectionUpload.base_url}.ipfs.nftstorage.link`,
-      } as NFTMetadata;
+			await saveCollectionData(controller.signal)
+			cleanMessage()
+		} catch (e) {
+			const err = e as any
+			const errMsg =
+				err.response?.data?.message || err.message || 'Please try again'
+			setMessage(errMsg)
+		}
+		setLoading(false)
+	}
 
-      const royalty: Royalty = {
-        [collectionUpload.account_id]: 10000,
-      } as Royalty;
-      const royalties: Royalties = {
-        accounts: royalty,
-        percent: 1000,
-      } as Royalties;
-      const sale: Sale = {
-        royalties: royalties,
-        initial_royalties: royalties,
-        price: utils.format.parseNearAmount(parsed.price.toString()),
-      } as Sale;
-      await contract.create_nft_contract(
-        Md5.hashStr(collectionUpload.base_url),
-        metadata,
-        parsed.images.length,
-        sale
-      );
-      setMessage("");
-    } catch (e) {
-      const err = e as any;
-      const errMsg =
-        err.response?.data?.message || err.message || "Please try again";
-      setMessage(errMsg);
-    }
-    setLoading(false);
-  };
-  const initLogin = async () => {
-    const loginStatus = await wallet.startUp();
-    setLogin(loginStatus);
-    if (loginStatus) {
-      const accountId = await wallet.getAccountId();
-      setAccountId(accountId);
-      const auth = await wallet.getAuthToken();
-      setAuthToken(auth);
-    }
-  };
-  useEffect(() => {
-    initLogin();
-  }, [wallet, contract]);
+	const uploadAssets = async (
+		data: FormData,
+		collection: CollectionData,
+		signal: AbortSignal
+	) => {
+		setUploading(true)
+		try {
+			if (!collection) {
+				throw new Error('Collection Not Found')
+			}
+			const storage = new NFTStorage({ token: data.api })
+			const assets: File[] = []
+			const toUpload: File[] = []
+			const tokens: any[] = []
+			logs.push(`reading image in folder`)
+			setLogs(logs)
+			for (let i = 0; i < data.folder.length; i++) {
+				const file = data.folder.item(i) as File
+				if (!file.type.includes('image')) {
+					continue
+				}
+				toUpload.push(file)
+			}
+			setTotalFiles(toUpload.length)
+			let uploadedCount = 0
+			const promises = toUpload.map((uploadFile, i) => {
+				return AsyncRetry(async () => {
+					if (signal.aborted) {
+						throw new Error('Canceled By User')
+					}
+					const file = uploadFile
+					const mediaName = file.name || 'Unsupported'
+					if (mediaName == 'Unsupported') {
+						throw new Error('Device not support filename')
+					}
+					const tokenData = await getTokenData(
+						collection.collection_id,
+						mediaName,
+						signal
+					)
+					const media = await file.arrayBuffer()
+					if (i == 0) {
+						const collectionIPFS = new IPFSFile([media], `collection.png`, {
+							type: 'image/png',
+						})
+						assets.push(collectionIPFS)
+					}
+					const mediaIPFS = new IPFSFile([media], `${i}.png`, {
+						type: 'image/png',
+					})
+					const token = tokenData.data as any
+					if (!token) {
+						throw new Error(`No data in csv for ${mediaName}`)
+					}
+					token.media = `${i}.png`
+					const dataIPFS = new IPFSFile([JSON.stringify(token)], `${i}.json`, {
+						type: 'application/json',
+					})
+					logs.push(
+						`${file.name} uploaded successfully (${uploadedCount + 1}/${
+							toUpload.length
+						})`
+					)
+					setLogs(logs)
+					setUploaded(uploadedCount + 1)
+					assets.push(mediaIPFS)
+					assets.push(dataIPFS)
+					tokens.push(token)
+					uploadedCount++
+				})
+			})
+			await Promise.all(promises)
+			const cid = await storage.storeDirectory(assets, { signal })
+			logs.push(`get cid successfully`)
+			setLogs(logs)
+			collection.base_url = cid as string
+			setCollectionData(collection)
+			for (let i = 0; i < tokens.length; i++) {
+				tokens[
+					i
+				].media = `https://${collection.base_url}.ipfs.nftstorage.link/${i}.png`
+				tokens[i].price = data.price
+			}
+			logs.push(`all files uploaded successfully`)
+			setLogs(logs)
+			setTokens(tokens)
+			return cid
+		} catch (err: any) {
+			const errMessage = `error: ${err.message}` || 'error: Please try again.'
+			logs.push(errMessage)
+			setLogs(logs)
+		}
+		return null
+	}
 
-  return (
-    <>
-      <Head>
-        <title>NFT Bulk Minting</title>
-      </Head>
-      <div className="min-h-full">
-        {typeof isLogin != "undefined" && (
-          <Nav
-            accountId={accountId}
-            isLogin={isLogin}
-            walletLogout={function (): void {
-              wallet.signOut();
-            }}
-            walletLogin={function (): void {
-              wallet.signIn();
-            }}
-          />
-        )}
-        <main>
-          <div className="mx-auto max-w-4xl py-6 sm:px-6 lg:px-8 mb-5">
-            <div className="px-4 py-2 sm:px-0">
-              {isLogin ? (
-                <form
-                  onSubmit={handleSubmit(onSubmit)}
-                  method="post"
-                  encType="multipart/form-data"
-                >
-                  <h3 className="text-white font-medium leading-tight text-3xl">
-                    Create Collection
-                  </h3>
-                  {message && (
-                    <div
-                      className="bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded relative"
-                      role="alert"
-                    >
-                      <strong className="font-bold">Upload Failed : </strong>
-                      <span className="block sm:inline">{message}</span>
-                      <span
-                        className="absolute top-0 bottom-0 right-0 px-4 py-3"
-                        onClick={cleanMessage}
-                      >
-                        <svg
-                          className="fill-current h-6 w-6 text-red-500"
-                          role="button"
-                          xmlns="http://www.w3.org/2000/svg"
-                          viewBox="0 0 20 20"
-                        >
-                          <title>Close</title>
-                          <path d="M14.348 14.849a1.2 1.2 0 0 1-1.697 0L10 11.819l-2.651 3.029a1.2 1.2 0 1 1-1.697-1.697l2.758-3.15-2.759-3.152a1.2 1.2 0 1 1 1.697-1.697L10 8.183l2.651-3.031a1.2 1.2 0 1 1 1.697 1.697l-2.758 3.152 2.758 3.15a1.2 1.2 0 0 1 0 1.698z" />
-                        </svg>
-                      </span>
-                    </div>
-                  )}
-                  <div>
-                    <div className="text-white mt-4">Collection Name</div>
-                    <input
-                      {...register("name")}
-                      required={true}
-                      className="mt-2 focus:border-gray-800 focus:bg-white focus:bg-opacity-10 
+	const onMint = async (data: FormData, collectionUpload: CollectionData) => {
+		try {
+			setLoading(true)
+			if (!collectionUpload) {
+				throw new Error('No Data Found')
+			}
+			if (!controller) {
+				controller = new window.AbortController()
+			}
+			const dataListing = {
+				collection_id: collectionUpload.collection_id,
+				cid: collectionUpload.base_url,
+			}
+			await submitList(authToken, dataListing, controller.signal)
+			const tokenSymbol = `${data.contract[0]}${new Date().getTime()}`
+
+			const metadata: NFTMetadata = {
+				spec: 'nft-1.0.0',
+				symbol: tokenSymbol,
+				name: collectionUpload.collection_name,
+				base_uri: `https://${collectionUpload.base_url}.ipfs.nftstorage.link`,
+			} as NFTMetadata
+
+			const royalty: Royalty = {
+				[collectionUpload.account_id]: 10000,
+			} as Royalty
+			const royalties: Royalties = {
+				accounts: royalty,
+				percent: 1000,
+			} as Royalties
+			const sale: Sale = {
+				royalties: royalties,
+				initial_royalties: royalties,
+				price: utils.format.parseNearAmount(data.price.toString()),
+			} as Sale
+			await contract.create_nft_contract(
+				data.contract,
+				metadata,
+				tokens.length,
+				sale
+			)
+			cleanMessage()
+			setLoading(false)
+		} catch (e) {
+			console.log(e)
+			const err = e as any
+			const errMsg =
+				err.response?.data?.message || err.message || 'Please try again'
+			setMessage(errMsg)
+			setLoading(false)
+		}
+	}
+	const initLogin = async () => {
+		const loginStatus = await wallet.startUp()
+		setLogin(loginStatus)
+		if (loginStatus) {
+			const accountId = await wallet.getAccountId()
+			setAccountId(accountId)
+			const auth = await wallet.getAuthToken()
+			setAuthToken(auth)
+		}
+	}
+	useEffect(() => {
+		initLogin()
+	}, [wallet, contract])
+
+	return (
+		<>
+			<Head>
+				<title>NFT Bulk Minting</title>
+			</Head>
+			<div className="min-h-full">
+				{typeof isLogin != 'undefined' && (
+					<Nav
+						accountId={accountId}
+						isLogin={isLogin}
+						walletLogout={function (): void {
+							wallet.signOut()
+						}}
+						walletLogin={function (): void {
+							wallet.signIn()
+						}}
+					/>
+				)}
+				<main>
+					<div className="mx-auto max-w-4xl py-6 sm:px-6 lg:px-8 mb-5">
+						<div className="px-4 py-2 sm:px-0">
+							{isLogin ? (
+								<form
+									onSubmit={handleSubmit(onSubmit)}
+									method="post"
+									encType="multipart/form-data"
+								>
+									{router.query.transactionHashes != undefined && (
+										<SuccessDialog
+                      txHash={router.query.transactionHashes.toString()} wallet={wallet}										/>
+									)}
+									{isUploading && (
+										<UploadDialog
+											ready={
+												uploaded > 0 &&
+												uploaded == totalFiles &&
+												currentCollectionData != undefined &&
+												currentCollectionData.base_url != ''
+											}
+											logs={logs}
+											onCancel={function (): void {
+												setUploading(false)
+												setLogs([])
+												if (controller) {
+													controller.abort('Canceled By User')
+												}
+											}}
+											onFinish={function (): void {
+												setUploading(false)
+												setPreview(true)
+												setLogs([])
+											}}
+										/>
+									)}
+									{isPreview && (
+										<PreviewdDialog
+											onCancel={function (): void {
+												setPreview(false)
+												if (controller) {
+													controller.abort('Canceled By User')
+												}
+											}}
+											onFinish={function (): void {
+												setPreview(false)
+												if (currentFormData && currentCollectionData) {
+													onMint(currentFormData, currentCollectionData)
+												}
+											}}
+											data={tokens}
+										/>
+									)}
+									<h3 className="text-white font-medium leading-tight text-3xl">
+										Create Collection
+									</h3>
+									{message && (
+										<div
+											className="bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded relative"
+											role="alert"
+										>
+											<strong className="font-bold">Upload Failed : </strong>
+											<span className="block sm:inline">{message}</span>
+											<span
+												className="absolute top-0 bottom-0 right-0 px-4 py-3"
+												onClick={cleanMessage}
+											>
+												<svg
+													className="fill-current h-6 w-6 text-red-500"
+													role="button"
+													xmlns="http://www.w3.org/2000/svg"
+													viewBox="0 0 20 20"
+												>
+													<title>Close</title>
+													<path d="M14.348 14.849a1.2 1.2 0 0 1-1.697 0L10 11.819l-2.651 3.029a1.2 1.2 0 1 1-1.697-1.697l2.758-3.15-2.759-3.152a1.2 1.2 0 1 1 1.697-1.697L10 8.183l2.651-3.031a1.2 1.2 0 1 1 1.697 1.697l-2.758 3.152 2.758 3.15a1.2 1.2 0 0 1 0 1.698z" />
+												</svg>
+											</span>
+										</div>
+									)}
+									<div>
+										<div className="text-white mt-4">Collection Name</div>
+										<input
+											{...register('name')}
+											required={true}
+											className="mt-2 focus:border-gray-800 focus:bg-white focus:bg-opacity-10 
                   input-text flex items-center relative w-full rounded-lg bg-white 
                   bg-opacity-10 focus:border-transparent outline-none text-white 
                   text-opacity-90 text-body text-base p-2"
-                      type="text"
-                      name="name"
-                      placeholder="Collection Name"
-                    />
-                  </div>
-                  <div>
-                    <div className="text-white mt-4">
-                      Collection Description
-                    </div>
-                    <textarea
-                      {...register("desc")}
-                      name="desc"
-                      required={true}
-                      className="mt-2 focus:border-gray-800 focus:bg-white focus:bg-opacity-10 
+											type="text"
+											name="name"
+											placeholder="Collection Name"
+										/>
+									</div>
+									<div>
+										<div className="text-white mt-4">Smart Contract Name</div>
+										<input
+											{...register('contract')}
+											required={true}
+											className="mt-2 focus:border-gray-800 focus:bg-white focus:bg-opacity-10 
                   input-text flex items-center relative w-full rounded-lg bg-white 
                   bg-opacity-10 focus:border-transparent outline-none text-white 
                   text-opacity-90 text-body text-base p-2"
-                      placeholder="Collection Description"
-                    />
-                  </div>
-                  <div>
-                    <div className="text-white mt-4">Media</div>
-                    <input
-                      {...register("media")}
-                      required={true}
-                      className="mt-2 focus:border-gray-800 focus:bg-white focus:bg-opacity-10 
+											type="text"
+											name="contract"
+											placeholder={`name.${process.env.NEXT_PUBLIC_CONTRACT_NAME}`}
+											maxLength={10}
+											minLength={5}
+										/>
+										<div className="text-gray-100 text-xs">
+											Contract ID contains lowercase characters (a-z) , digits
+											(0-9) & length 5-10
+										</div>
+									</div>
+									<div>
+										<div className="text-white mt-4">
+											Collection Description
+										</div>
+										<textarea
+											{...register('desc')}
+											name="desc"
+											required={true}
+											className="mt-2 focus:border-gray-800 focus:bg-white focus:bg-opacity-10 
                   input-text flex items-center relative w-full rounded-lg bg-white 
                   bg-opacity-10 focus:border-transparent outline-none text-white 
                   text-opacity-90 text-body text-base p-2"
-                      type="file"
-                      name="media"
-                      accept="image/png, image/jpeg"
-                      placeholder="Collection Media"
-                    />
-                  </div>
-                  <div>
-                    <div className="text-white mt-4">Collection Data</div>
-                    <input
-                      {...register("csv")}
-                      required={true}
-                      className="mt-2 focus:border-gray-800 focus:bg-white focus:bg-opacity-10 
+											placeholder="Collection Description"
+										/>
+									</div>
+									<div>
+										<div className="text-white mt-4">Assets Folder</div>
+										<input
+											{...register('folder')}
+											required={true}
+											className="mt-2 focus:border-gray-800 focus:bg-white focus:bg-opacity-10 
                   input-text flex items-center relative w-full rounded-lg bg-white 
                   bg-opacity-10 focus:border-transparent outline-none text-white 
                   text-opacity-90 text-body text-base p-2"
-                      type="file"
-                      name="csv"
-                      accept="text/csv"
-                      placeholder="Collection List File"
-                    />
-                    <div className="text-white">
-                      <button
-                        onClick={downloadTemplate}
-                        type="button"
-                        className="text-blue-500 text-base font-bold"
-                      >
-                        Click here
-                      </button>{" "}
-                      to download template
-                    </div>
-                  </div>
-                  <div>
-                    <div className="text-white mt-4">Collection Images</div>
-                    <input
-                      {...register("images")}
-                      required={true}
-                      className="mt-2 focus:border-gray-800 focus:bg-white focus:bg-opacity-10 
+											type="file"
+											name="folder"
+											{...directoryOption}
+										/>
+									</div>
+									<div>
+										<div className="text-white mt-4">CSV Files</div>
+										<input
+											{...register('csv')}
+											required={true}
+											className="mt-2 focus:border-gray-800 focus:bg-white focus:bg-opacity-10 
                   input-text flex items-center relative w-full rounded-lg bg-white 
                   bg-opacity-10 focus:border-transparent outline-none text-white 
                   text-opacity-90 text-body text-base p-2"
-                      type="file"
-                      name="images"
-                      accept="image/png, image/jpeg"
-                      placeholder="Collection Images"
-                      multiple={true}
-                    />
-                    <div className="text-white">
-                      The Images will be named in order. Please, sort first !
-                    </div>
-                  </div>
-                  <div>
-                    <div className="text-white mt-4">Price (N)</div>
-                    <input
-                      {...register("price")}
-                      required={true}
-                      className="mt-2 focus:border-gray-800 focus:bg-white focus:bg-opacity-10 
+											type="file"
+											name="csv"
+											accept="text/csv"
+											placeholder="Collection Tokens CSV"
+										/>
+										<div className="text-gray-100  text-xs">
+											<button
+												onClick={downloadTemplate}
+												type="button"
+												className="text-blue-500 text-base font-bold"
+											>
+												Click here
+											</button>{' '}
+											to download template
+										</div>
+									</div>
+									<div>
+										<div className="text-white mt-4">Price (N)</div>
+										<input
+											{...register('price')}
+											required={true}
+											className="mt-2 focus:border-gray-800 focus:bg-white focus:bg-opacity-10 
                   input-text flex items-center relative w-full rounded-lg bg-white 
                   bg-opacity-10 focus:border-transparent outline-none text-white 
                   text-opacity-90 text-body text-base p-2"
-                      type="number"
-                      name="price"
-                      min={1}
-                      max={99}
-                      placeholder="1"
-                    />
-                  </div>
-                  <div>
-                    <div className="text-white mt-4">NFT STorage API Key</div>
-                    <input
-                      {...register("api")}
-                      required={true}
-                      className="mt-2 focus:border-gray-800 focus:bg-white focus:bg-opacity-10 
+											type="number"
+											name="price"
+											min={1}
+											max={99}
+											placeholder="1"
+										/>
+									</div>
+									<div>
+										<div className="text-white mt-4">NFT STorage API Key</div>
+										<input
+											{...register('api')}
+											required={true}
+											className="mt-2 focus:border-gray-800 focus:bg-white focus:bg-opacity-10 
                   input-text flex items-center relative w-full rounded-lg bg-white 
                   bg-opacity-10 focus:border-transparent outline-none text-white 
                   text-opacity-90 text-body text-base p-2"
-                      type="text"
-                      name="api"
-                      placeholder="API KEY"
-                    />
-                    <div className="text-white">
-                      Note: if ypu don't have one.{" "}
-                      <a
-                        className="text-blue-500 text-base font-bold"
-                        href="https://nft.storage/docs/quickstart/#get-an-api-token"
-                      >
-                        Create Here
-                      </a>
-                    </div>
-                  </div>
-                  <div>
-                    <button
-                      disabled={isLoading}
-                      type="submit"
-                      className="mt-8 inline-block text-center relative whitespace-nowrap 
+											type="text"
+											name="api"
+											placeholder="API KEY"
+										/>
+										<div className="text-gray-100  text-xs">
+											Note: if you don't have one.{' '}
+											<a
+												className="text-blue-500 text-sm font-bold"
+												href="https://nft.storage/docs/quickstart/#get-an-api-token"
+											>
+												Create Here
+											</a>
+										</div>
+									</div>
+									<div>
+										<button
+											disabled={isLoading}
+											type="submit"
+											className="mt-8 inline-block text-center relative whitespace-nowrap 
                   rounded-md font-medium text-body transition duration-150 ease-in-out
                 bg-blue-800 text-gray-100 false py-3 px-20 text-base cursor-default"
-                    >
-                      {isLoading ? (
-                        <div role="status">
-                          <svg
-                            className="inline mr-2 w-8 h-8 text-gray-200 animate-spin dark:text-gray-600 fill-gray-600 dark:fill-gray-300"
-                            viewBox="0 0 100 101"
-                            fill="none"
-                            xmlns="http://www.w3.org/2000/svg"
-                          >
-                            <path
-                              d="M100 50.5908C100 78.2051 77.6142 100.591 50 100.591C22.3858 100.591 0 78.2051 0 50.5908C0 22.9766 22.3858 0.59082 50 0.59082C77.6142 0.59082 100 22.9766 100 50.5908ZM9.08144 50.5908C9.08144 73.1895 27.4013 91.5094 50 91.5094C72.5987 91.5094 90.9186 73.1895 90.9186 50.5908C90.9186 27.9921 72.5987 9.67226 50 9.67226C27.4013 9.67226 9.08144 27.9921 9.08144 50.5908Z"
-                              fill="currentColor"
-                            />
-                            <path
-                              d="M93.9676 39.0409C96.393 38.4038 97.8624 35.9116 97.0079 33.5539C95.2932 28.8227 92.871 24.3692 89.8167 20.348C85.8452 15.1192 80.8826 10.7238 75.2124 7.41289C69.5422 4.10194 63.2754 1.94025 56.7698 1.05124C51.7666 0.367541 46.6976 0.446843 41.7345 1.27873C39.2613 1.69328 37.813 4.19778 38.4501 6.62326C39.0873 9.04874 41.5694 10.4717 44.0505 10.1071C47.8511 9.54855 51.7191 9.52689 55.5402 10.0491C60.8642 10.7766 65.9928 12.5457 70.6331 15.2552C75.2735 17.9648 79.3347 21.5619 82.5849 25.841C84.9175 28.9121 86.7997 32.2913 88.1811 35.8758C89.083 38.2158 91.5421 39.6781 93.9676 39.0409Z"
-                              fill="currentFill"
-                            />
-                          </svg>
-                        </div>
-                      ) : (
-                        <span>Upload Data</span>
-                      )}
-                    </button>
-                  </div>
-                </form>
-              ) : (
-                <div className="text-white text-center">
-                  <h3 className="font-medium leading-tight text-3xl">
-                    You need to login first.
-                  </h3>
-                </div>
-              )}
-            </div>
-          </div>
-        </main>
-      </div>
-    </>
-  );
+										>
+											{isLoading ? <Loading /> : <span>Upload Data</span>}
+										</button>
+									</div>
+								</form>
+							) : (
+								<div className="text-white text-center">
+									<h3 className="font-medium leading-tight text-3xl">
+										You need to login first.
+									</h3>
+								</div>
+							)}
+						</div>
+					</div>
+				</main>
+			</div>
+		</>
+	)
 }
