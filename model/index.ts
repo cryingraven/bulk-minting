@@ -28,4 +28,5 @@ export interface CollectionData {
 	base_url: string
 	collection_id: string
 	collection_name: string
+	num_of_tokens: number
 }

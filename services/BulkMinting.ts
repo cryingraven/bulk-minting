@@ -45,3 +45,10 @@ export const getTokenData = async (
 			signal: signal,
 		}
 	)
+
+export const postNotify = async (auth: string, data: any) =>
+	baseRequest.post('/collection/bulk-creation-notify', data, {
+		headers: {
+			Authorization: auth,
+		},
+	})
