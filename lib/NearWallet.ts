@@ -20,9 +20,7 @@ const NO_DEPOSIT = '0'
 interface QueryResult {
 	result: any
 }
-interface ExecutorOutCome {
-	executor_id: string
-}
+
 export class NearWallet {
 	walletSelector: WalletSelector | undefined
 	wallet: Wallet | undefined
@@ -119,6 +117,9 @@ export class NearWallet {
 		gas = DEFAULT_GAS,
 		deposit = NO_DEPOSIT
 	) {
+		if (!this.wallet) {
+			await this.startUp()
+		}
 		return await this.wallet!!.signAndSendTransaction({
 			signerId: this.accountId,
 			receiverId: contractId,

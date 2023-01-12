@@ -47,3 +47,24 @@ export class BulKContract {
 		)
 	}
 }
+
+export class NFTContract {
+	contractId: any
+	wallet: NearWallet
+	constructor(contractId: any, walletToUse: NearWallet) {
+		this.contractId = contractId
+		this.wallet = walletToUse
+	}
+
+	async nft_mint_many(price: number, total: number) {
+		await this.wallet.callMethod(
+			this.contractId,
+			'nft_mint_many',
+			{
+				num: total,
+			},
+			DEFAULT_GAS,
+			utils.format.parseNearAmount((total * price).toString())?.toString()
+		)
+	}
+}

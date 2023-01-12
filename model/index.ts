@@ -29,4 +29,7 @@ export interface CollectionData {
 	collection_id: string
 	collection_name: string
 	num_of_tokens: number
+	collection_description: string | undefined
+	collection_media: string | undefined
+	price: string | undefined
 }

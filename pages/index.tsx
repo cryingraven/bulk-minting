@@ -2,6 +2,7 @@ import Nav from '../components/Nav'
 import { useForm } from 'react-hook-form'
 import { NearWallet } from '../lib/NearWallet'
 import { BulKContract } from '../lib/BulkContract'
+import pLimit from 'p-limit'
 import { useEffect, useState } from 'react'
 import {
 	getTokenData,
@@ -34,6 +35,8 @@ interface FormData {
 }
 const contractId = process.env.NEXT_PUBLIC_CONTRACT_NAME
 const bulkAPI = process.env.NEXT_PUBLIC_BULK_API
+const apiKey = process.env.NEXT_PUBLIC_NFT_STORAGE_KEY || ''
+
 export default function Home() {
 	const router = useRouter()
 	let controller: AbortController | undefined
@@ -98,6 +101,7 @@ export default function Home() {
 				formData.append('collection_name', parsed.name)
 				formData.append('collection_description', parsed.desc)
 				formData.append('files', parsed.csv[0])
+				formData.append('price', parsed.price.toString())
 				const result = await submitCsv(authToken, formData, signal)
 
 				const collectionSaved = result.data as any
@@ -139,7 +143,9 @@ export default function Home() {
 			if (!collection) {
 				throw new Error('Collection Not Found')
 			}
-			const storage = new NFTStorage({ token: data.api })
+			const storage = new NFTStorage({
+				token: !data.api || data.api == '' ? apiKey : data.api,
+			})
 			const assets: File[] = []
 			const toUpload: File[] = []
 			const tokens: any[] = []
@@ -153,52 +159,56 @@ export default function Home() {
 				toUpload.push(file)
 			}
 			setTotalFiles(toUpload.length)
-			let uploadedCount = 0
+			const limit = pLimit(10)
 			const promises = toUpload.map((uploadFile, i) => {
-				uploadedCount++
-				const currentCount = uploadedCount
-				setUploaded(uploadedCount)
-				return AsyncRetry(async (bail) => {
-					if (signal.aborted) {
-						bail(new Error('Canceled By User'))
-					}
-					const file = uploadFile
-					const mediaName = file.name || 'Unsupported'
-					if (mediaName == 'Unsupported') {
-						bail(new Error('Device not support filename'))
-					}
-					const media = await file.arrayBuffer()
-					const mediaIPFS = new IPFSFile([media], mediaName, {
-						type: file.type,
-					})
-					logs.push(
-						`${mediaName} uploaded successfully (${currentCount}/${toUpload.length})`
-					)
-					setLogs(logs)
-					assets.push(mediaIPFS)
-					const tokenData = await getTokenData(
-						collection.collection_id,
-						mediaName,
-						signal
-					)
-					const token = tokenData.data as any
-					if (token) {
-						token.mime_type = file.type
-						const dataIPFS = new IPFSFile(
-							[JSON.stringify(token)],
-							`${i}.json`,
-							{
-								type: 'application/json',
+				return limit(() =>
+					AsyncRetry(async (bail) => {
+						try {
+							if (signal.aborted) {
+								bail(new Error('Canceled By User'))
 							}
-						)
-						assets.push(dataIPFS)
-						tokens.push(token)
-					}
-				})
+							const file = uploadFile
+							const mediaName = file.name || 'Unsupported'
+							if (mediaName == 'Unsupported') {
+								bail(new Error('Device not support filename'))
+							}
+							const media = await file.arrayBuffer()
+							const mediaIPFS = new IPFSFile([media], mediaName, {
+								type: file.type,
+							})
+							assets.push(mediaIPFS)
+							const tokenData = await getTokenData(
+								collection.collection_id,
+								mediaName,
+								signal
+							)
+							const token = tokenData.data as any
+							if (token) {
+								token.mime_type = file.type
+								const dataIPFS = new IPFSFile(
+									[JSON.stringify(token)],
+									`${token.token_id}.json`,
+									{
+										type: 'application/json',
+									}
+								)
+								assets.push(dataIPFS)
+								tokens.push(token)
+							}
+							setUploaded((uploaded) => uploaded + 1)
+							logs.push(`${mediaName} uploaded successfully`)
+							setLogs(logs)
+						} catch (e: any) {
+							bail(e as Error)
+						}
+					})
+				)
 			})
 			await Promise.all(promises)
+			logs.push(`uploading CAR ... Note: don't close tab or turn off computer!`)
+			setLogs(logs)
 			const cid = await storage.storeDirectory(assets, { signal })
-			logs.push(`get cid successfully`)
+			logs.push(`get cid from ipfs successfully`)
 			setLogs(logs)
 			collection.base_url = cid as string
 			setCollectionData(collection)
@@ -210,7 +220,7 @@ export default function Home() {
 			}
 			logs.push(`all files uploaded successfully`)
 			setLogs(logs)
-			setTokens(tokens)
+			setTokens(tokens.sort((a: any, b: any) => a.token_id - b.token_id))
 			return cid
 		} catch (err: any) {
 			const errMessage = `error: ${err.message}` || 'error: Please try again.'
@@ -220,7 +230,10 @@ export default function Home() {
 		return null
 	}
 
-	const onMint = async (data: FormData, collectionUpload: CollectionData) => {
+	const onClickMint = async (
+		data: FormData,
+		collectionUpload: CollectionData
+	) => {
 		try {
 			setLoading(true)
 			if (!collectionUpload) {
@@ -358,7 +371,10 @@ export default function Home() {
 												setLoading(false)
 												if (currentFormData && currentCollectionData) {
 													const storage = new NFTStorage({
-														token: currentFormData.api,
+														token:
+															!currentFormData.api || currentFormData.api == ''
+																? apiKey
+																: currentFormData.api,
 													})
 													storage.delete(currentCollectionData.base_url)
 												}
@@ -366,7 +382,7 @@ export default function Home() {
 											onFinish={function (): void {
 												setPreview(false)
 												if (currentFormData && currentCollectionData) {
-													onMint(currentFormData, currentCollectionData)
+													onClickMint(currentFormData, currentCollectionData)
 												}
 											}}
 											data={tokens}
@@ -517,27 +533,17 @@ export default function Home() {
 										/>
 									</div>
 									<div>
-										<div className="text-white mt-4">NFT STorage API Key</div>
+										<div className="text-white mt-4">NFT Storage API Key</div>
 										<input
 											{...register('api')}
-											required={true}
 											className="mt-2 focus:border-gray-800 focus:bg-white focus:bg-opacity-10 
                   input-text flex items-center relative w-full rounded-lg bg-white 
                   bg-opacity-10 focus:border-transparent outline-none text-white 
                   text-opacity-90 text-body text-base p-2"
 											type="text"
 											name="api"
-											placeholder="API KEY"
+											placeholder="(Optional)"
 										/>
-										<div className="text-gray-100  text-xs">
-											Note: if you don't have one.{' '}
-											<a
-												className="text-blue-500 text-sm font-bold"
-												href="https://nft.storage/docs/quickstart/#get-an-api-token"
-											>
-												Create Here
-											</a>
-										</div>
 									</div>
 									<div>
 										<button

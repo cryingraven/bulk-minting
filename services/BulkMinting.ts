@@ -52,3 +52,6 @@ export const postNotify = async (auth: string, data: any) =>
 			Authorization: auth,
 		},
 	})
+
+export const getCollectionDataForContract = async (contractId: string) =>
+	baseRequest.get(`/collection/bulk-creation-collection/${contractId}`)
